@@ -31,7 +31,8 @@ contract WalletAttack {
         
         exploit_env();
         (bool success, ) = (payable (msg.sender)).call{value: address(this).balance}("");
-        require(success);
+        require(success, "Unsucceful 34");
+        receivedAmount=0;
     }
 
     function exploit_env() public payable {
