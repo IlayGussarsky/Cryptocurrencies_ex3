@@ -98,6 +98,7 @@ contract RPS is IRPS {
             game.player2 = msg.sender;
             game.hiddenMove2 = hiddenMove;
             game.state = GameState.MOVE2;
+            game.move2 = Move.NONE;
         } else if (game.state == GameState.NO_GAME) {
             require(msg.sender.balance >= betAmount, "Not enough balance");
             balances[msg.sender] = msg.sender.balance - betAmount;
@@ -105,6 +106,7 @@ contract RPS is IRPS {
             game.betAmount = betAmount;
             game.hiddenMove1 = hiddenMove;
             game.state = GameState.MOVE1;
+            game.move1 = Move.NONE;
         } else {
             revert("Invalid game state");
         }
@@ -145,18 +147,35 @@ contract RPS is IRPS {
         );
 
         if (msg.sender == game.player1) {
-            require(checkCommitment(game.hiddenMove1, move, key), "Invalid commitment");
+            require(game.move1 == Move.NONE, "Move1 already revealed");
+            require(checkCommitment(game.hiddenMove1, Move(move), key), "Invalid commitment");
+            if (game.state == GameState.REVEAL1) {
+                if (game.move1 != Move.NONE && game.move2 != Move.NONE){
+                endGame(gameID);
+                }
+                else if  (block.number >= game.revealBlock + revealPeriodLength){
+                    this.revealPhaseEndedUpdateBalance(gameID);
+                }
+            }
+            else{
             game.move1 = move;
             game.revealBlock = block.number;
             game.state = GameState.REVEAL1;
+            }
         } else if (msg.sender == game.player2) {
+             require(game.move2 == Move.NONE, "Move2 already revealed");
             require(checkCommitment(game.hiddenMove2, move, key), "Invalid commitment");
-            game.move2 = move;
             if (game.state == GameState.REVEAL1) {
+                if (game.move1 != Move.NONE && game.move2 != Move.NONE){
                 endGame(gameID);
+                }
+                else if  (block.number >= game.revealBlock + revealPeriodLength){
+                    this.revealPhaseEndedUpdateBalance(gameID);
+                }
             } else {
+                game.move2 = move;
                 game.revealBlock = block.number;
-                game.state = GameState.MOVE2;
+                game.state = GameState.REVEAL1;
             }
         }
     }
@@ -195,6 +214,17 @@ contract RPS is IRPS {
             "Only players in this game can claim"
         );
         if (game.move1 != Move.NONE && game.move2 == Move.NONE) {
+            balances[game.player1] += 2 * game.betAmount;
+        } else if (game.move1 == Move.NONE && game.move2 != Move.NONE) {
+            balances[game.player2] += 2 * game.betAmount;
+        }
+        game.state = GameState.NO_GAME;
+    }
+
+
+    function revealPhaseEndedUpdateBalance(uint gameID) external  {
+          Game storage game = games[gameID];
+          if (game.move1 != Move.NONE && game.move2 == Move.NONE) {
             balances[game.player1] += 2 * game.betAmount;
         } else if (game.move1 == Move.NONE && game.move2 != Move.NONE) {
             balances[game.player2] += 2 * game.betAmount;
