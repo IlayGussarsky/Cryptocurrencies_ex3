@@ -149,8 +149,9 @@ contract RPS is IRPS {
         if (msg.sender == game.player1) {
             require(game.move1 == Move.NONE, "Move1 already revealed");
             require(checkCommitment(game.hiddenMove1, Move(move), key), "Invalid commitment");
+            game.move1 = move;
             if (game.state == GameState.REVEAL1) {
-                if (game.move1 != Move.NONE && game.move2 != Move.NONE){
+                if (game.move2 != Move.NONE){
                 endGame(gameID);
                 }
                 else if  (block.number >= game.revealBlock + revealPeriodLength){
@@ -158,22 +159,22 @@ contract RPS is IRPS {
                 }
             }
             else{
-            game.move1 = move;
             game.revealBlock = block.number;
             game.state = GameState.REVEAL1;
             }
         } else if (msg.sender == game.player2) {
-             require(game.move2 == Move.NONE, "Move2 already revealed");
+            require(game.move2 == Move.NONE, "Move2 already revealed");
             require(checkCommitment(game.hiddenMove2, move, key), "Invalid commitment");
+             game.move2 = move;
             if (game.state == GameState.REVEAL1) {
-                if (game.move1 != Move.NONE && game.move2 != Move.NONE){
+                if (game.move1 != Move.NONE){
                 endGame(gameID);
                 }
                 else if  (block.number >= game.revealBlock + revealPeriodLength){
                     this.revealPhaseEndedUpdateBalance(gameID);
                 }
             } else {
-                game.move2 = move;
+
                 game.revealBlock = block.number;
                 game.state = GameState.REVEAL1;
             }
@@ -191,10 +192,9 @@ contract RPS is IRPS {
             (game.move1 == Move.SCISSORS && game.move2 == Move.PAPER)
         ) {
             balances[game.player1] += 2 * game.betAmount;
-            payable(game.player1).transfer(game.betAmount * 2);
-        } else {
+        }
+        else {
             balances[game.player2] += 2 * game.betAmount;
-            payable(game.player2).transfer(game.betAmount * 2);
         }
         game.state = GameState.NO_GAME;
     }
@@ -217,8 +217,9 @@ contract RPS is IRPS {
             balances[game.player1] += 2 * game.betAmount;
         } else if (game.move1 == Move.NONE && game.move2 != Move.NONE) {
             balances[game.player2] += 2 * game.betAmount;
+
         }
-        game.state = GameState.NO_GAME;
+        game.state = GameState.LATE;
     }
 
 
@@ -229,7 +230,7 @@ contract RPS is IRPS {
         } else if (game.move1 == Move.NONE && game.move2 != Move.NONE) {
             balances[game.player2] += 2 * game.betAmount;
         }
-        game.state = GameState.NO_GAME;
+        game.state = GameState.LATE;
     }
 
     function balanceOf(address player) external view returns (uint) {
@@ -250,4 +251,5 @@ contract RPS is IRPS {
         // adds eth to the account of the message sender.
         balances[msg.sender] += msg.value;
     }
+
 }
