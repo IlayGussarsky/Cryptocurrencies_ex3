@@ -5,6 +5,16 @@ import solcx
 from solcx import compile_files, install_solc
 from web3.exceptions import ContractLogicError
 import hashlib
+from enum import Enum
+
+
+# Define Move enum locally in your test file
+class Move(Enum):
+    NONE = 0
+    ROCK = 1
+    PAPER = 2
+    SCISSORS = 3
+
 
 SOLC_VERSION = 'v0.8.19'
 
@@ -146,11 +156,81 @@ def test_player2_cant_cancel_game(contract, accounts, w3, player1, player2):
     return False  # No error occurred
 
 
-def test_reveal_move(contract, accounts, web3):
+def test_reveal_move_first_player(contract, accounts, w3, player1, player2):
+    # Simulate player 1 making a move
+    game_id = 0
+    bet_amount = w3.to_wei(1, 'ether')
+    str1 = (Web3.to_bytes(text="secret1")).zfill(32)
+    # Simulate player 1 making a move
+    hidden_move1 = HexBytes(Web3.solidity_keccak(['int256', 'bytes32'], [1, str1]))
+    contract.functions.makeMove(game_id, bet_amount, hidden_move1).transact({'from': player1})
+    # Simulate player 2 making a move
+    hidden_move2 = HexBytes(Web3.solidity_keccak(['int256', 'bytes32'], [1, b"secret2"]))
+    contract.functions.makeMove(game_id, bet_amount, hidden_move2).transact({'from': player2})
+    contract.functions.revealMove(game_id,1, str1).transact({'from': player1})
+
+    # Check game state after first player revealed
+    game_state = contract.functions.getGameState(game_id).call()
+    assert game_state == 3  # GameState.REVEAL1
+    # try reveal again
+    try:
+        contract.functions.revealMove(game_id,1, str1).transact({'from': player1})
+        # Check if the transaction failed (revert occurred)
+    except ContractLogicError:
+        return True  # Error occurred as expected
+    return False  # No error occurred
+
+
+def test_reveal_move_both_players(contract, accounts, w3, player1, player2):
+    #TO DO - check why not pass? probably problem with balance in endGame
+
+    # Simulate player 1 making a move
+    game_id = 0
+    bet_amount = w3.to_wei(1, 'ether')
+    # Check balances before endGame
+    winner_balance_before = w3.eth.get_balance(player1)
+    loser_balance_before = w3.eth.get_balance(player2)
+
+    # Player 1's move
+    str1 = (Web3.to_bytes(text="secret1")).zfill(32)
+    hidden_move1 = HexBytes(Web3.solidity_keccak(['int256', 'bytes32'], [1, str1]))
+    contract.functions.makeMove(game_id, bet_amount, hidden_move1).transact({'from': player1})
+
+    # Simulate player 2 making a move
+    str2 = (Web3.to_bytes(text="secret2")).zfill(32)
+    hidden_move2 = HexBytes(Web3.solidity_keccak(['int256', 'bytes32'], [2, str2]))
+    contract.functions.makeMove(game_id, bet_amount, hidden_move2).transact({'from': player2})
+
+    # Player 1 reveals move
+    contract.functions.revealMove(game_id, 1, str1).transact({'from': player1})
+
+    # Check game state after first player revealed
+    game_state = contract.functions.getGameState(game_id).call()
+    assert game_state == 3  # GameState.REVEAL1
+
+    # Player 2 reveals move
+    contract.functions.revealMove(game_id, 2, str2).transact({'from': player2})
+
+    # Check game state after both players revealed
+    game_state = contract.functions.getGameState(game_id).call()
+    assert game_state == 0  # GameState.NoGame
+
+    # Check balances after endGame
+    winner_balance_after = w3.eth.get_balance(player1)
+    loser_balance_after = w3.eth.get_balance(player2)
+
+    # Check if the winner balance increased by the correct amount (bet)
+    assert winner_balance_after == winner_balance_before + bet_amount
+
+    # Check if the loser balance decreased by the bet amount
+    assert loser_balance_after == loser_balance_before - bet_amount
+
+def test_revealPhaseEnded(contract, accounts, web3):
+    #TO DO
     return 1
-
-
-
+def test_balanceOf(contract, accounts, web3):
+    #TO DO
+    return 1
 def test_withdraw(contract, accounts, web3):
+    #TO DO
     return 1
-
