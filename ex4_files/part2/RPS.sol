@@ -95,6 +95,8 @@ contract RPS is IRPS {
             require(msg.sender != game.player1, "Cannot play against yourself");
             require(msg.sender.balance>= game.betAmount, "Not enough balance");
             balances[msg.sender] = msg.sender.balance - game.betAmount;
+            address(this).call{value: betAmount}("");
+
             game.player2 = msg.sender;
             game.hiddenMove2 = hiddenMove;
             game.state = GameState.MOVE2;
@@ -102,9 +104,11 @@ contract RPS is IRPS {
         } else if (game.state == GameState.NO_GAME) {
             require(msg.sender.balance >= betAmount, "Not enough balance");
             balances[msg.sender] = msg.sender.balance - betAmount;
+            address(this).call{value: betAmount}("");
             game.player1 = msg.sender;
             game.betAmount = betAmount;
             game.hiddenMove1 = hiddenMove;
+            game.hiddenMove2 = 0;
             game.state = GameState.MOVE1;
             game.move1 = Move.NONE;
         } else {
@@ -192,9 +196,13 @@ contract RPS is IRPS {
             (game.move1 == Move.SCISSORS && game.move2 == Move.PAPER)
         ) {
             balances[game.player1] += 2 * game.betAmount;
+            game.player1.call{value: 2 * game.betAmount}("");
+
         }
         else {
             balances[game.player2] += 2 * game.betAmount;
+            game.player2.call{value: 2 * game.betAmount}("");
+
         }
         game.state = GameState.NO_GAME;
     }
@@ -213,11 +221,12 @@ contract RPS is IRPS {
             msg.sender == game.player1 || msg.sender == game.player2,
             "Only players in this game can claim"
         );
-        if (game.move1 != Move.NONE && game.move2 == Move.NONE) {
+        if (game.move1 != Move.NONE && game.move2 == Move.NONE && game.hiddenMove2 != 0) {
             balances[game.player1] += 2 * game.betAmount;
+            game.player1.call{value: 2 * game.betAmount}("");
         } else if (game.move1 == Move.NONE && game.move2 != Move.NONE) {
             balances[game.player2] += 2 * game.betAmount;
-
+            game.player2.call{value: 2 * game.betAmount}("");
         }
         game.state = GameState.LATE;
     }
@@ -226,9 +235,12 @@ contract RPS is IRPS {
     function revealPhaseEndedUpdateBalance(uint gameID) external  {
           Game storage game = games[gameID];
           if (game.move1 != Move.NONE && game.move2 == Move.NONE) {
-            balances[game.player1] += 2 * game.betAmount;
+            balances[game.player1] +=  game.betAmount;
+            game.player1.call{value: game.betAmount}("");
         } else if (game.move1 == Move.NONE && game.move2 != Move.NONE) {
-            balances[game.player2] += 2 * game.betAmount;
+            balances[game.player2] += game.betAmount;
+            game.player2.call{value: game.betAmount}("");
+
         }
         game.state = GameState.LATE;
     }
