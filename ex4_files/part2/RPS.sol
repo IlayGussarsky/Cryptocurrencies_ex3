@@ -1,13 +1,20 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
+
 interface IRPS {
     // WARNING: Do not change this interface!!! these API functions are used to test your code.
     function getGameState(uint gameID) external view returns (RPS.GameState);
+
     function makeMove(uint gameID, uint betAmount, bytes32 hiddenMove) external;
+
     function cancelGame(uint gameID) external;
+
     function revealMove(uint gameID, RPS.Move move, bytes32 key) external;
+
     function revealPhaseEnded(uint gameID) external;
+
     function balanceOf(address player) external view returns (uint);
+
     function withdraw(uint amount) external;
 }
 
@@ -63,9 +70,9 @@ contract RPS is IRPS {
     }
 
     function checkCommitment(
-        // A utility function that can be used to check commitments. See also commit.py.
-        // python code to generate the commitment is:
-        //  commitment = HexBytes(Web3.solidityKeccak(['int256', 'bytes32'], [move, key]))
+    // A utility function that can be used to check commitments. See also commit.py.
+    // python code to generate the commitment is:
+    //  commitment = HexBytes(Web3.solidityKeccak(['int256', 'bytes32'], [move, key]))
         bytes32 commitment,
         Move move,
         bytes32 key
@@ -79,12 +86,12 @@ contract RPS is IRPS {
     }
 
     function makeMove(
-        // The first call to this function starts the game. The second call finishes the commit phase.
-        // The amount is the amount of money (in wei) that a user is willing to bet.
-        // The amount provided in the call by the second player is ignored, but the user must have an amount matching that of the game to bet.
-        // amounts that are wagered are locked for the duration of the game.
-        // A player should not be allowed to enter a commitment twice.
-        // If two moves have already been entered, then this call reverts.
+    // The first call to this function starts the game. The second call finishes the commit phase.
+    // The amount is the amount of money (in wei) that a user is willing to bet.
+    // The amount provided in the call by the second player is ignored, but the user must have an amount matching that of the game to bet.
+    // amounts that are wagered are locked for the duration of the game.
+    // A player should not be allowed to enter a commitment twice.
+    // If two moves have already been entered, then this call reverts.
         uint gameID,
         uint betAmount,
         bytes32 hiddenMove
@@ -94,14 +101,14 @@ contract RPS is IRPS {
         if (game.state == GameState.MOVE1) {
             require(msg.sender != game.player1, "Cannot play against yourself");
             require(balances[msg.sender] >= betAmount, "Not enough balance");
-            balances[msg.sender]-=betAmount;
+//            balances[msg.sender]-=betAmount;
             game.player2 = msg.sender;
             game.hiddenMove2 = hiddenMove;
             game.state = GameState.MOVE2;
             game.move2 = Move.NONE;
         } else if (game.state == GameState.NO_GAME) {
             require(balances[msg.sender] >= betAmount, "Not enough balance");
-            balances[msg.sender]-=betAmount;
+//            balances[msg.sender]-=betAmount;
             game.player1 = msg.sender;
             game.betAmount = betAmount;
             game.hiddenMove1 = hiddenMove;
@@ -127,7 +134,7 @@ contract RPS is IRPS {
     }
 
     function revealMove(uint gameID, Move move, bytes32 key) external {
-         // Reveals the move of a player (which is checked against his commitment using the key)
+        // Reveals the move of a player (which is checked against his commitment using the key)
         // The first call to this function can be made only after two moves have been entered (otherwise the function reverts).
         // This call will begin the reveal period.
         // the second call (if called by the player that entered the second move) reveals her move, ends the game, and awards the money to the winner.
@@ -153,23 +160,23 @@ contract RPS is IRPS {
             require(checkCommitment(game.hiddenMove1, Move(move), key), "Invalid commitment");
             game.move1 = move;
             if (game.state == GameState.REVEAL1) {
-                this.revealPhaseEnded(gameID);
-                if (game.move2 != Move.NONE){
+//                this.revealPhaseEnded(gameID);
+                if (game.move2 != Move.NONE) {
                     endGame(gameID);
                 }
             }
-            else{
-            game.revealBlock = block.number;
-            game.state = GameState.REVEAL1;
+            else {
+                game.revealBlock = block.number;
+                game.state = GameState.REVEAL1;
             }
         } else if (msg.sender == game.player2) {
             require(game.move2 == Move.NONE, "Move2 already revealed");
             require(checkCommitment(game.hiddenMove2, move, key), "Invalid commitment");
-             game.move2 = move;
+            game.move2 = move;
             if (game.state == GameState.REVEAL1) {
-                this.revealPhaseEnded(gameID);
-                if (game.move1 != Move.NONE){
-                endGame(gameID);
+//                this.revealPhaseEnded(gameID);
+                if (game.move1 != Move.NONE) {
+                    endGame(gameID);
                 }
             } else {
                 game.revealBlock = block.number;
@@ -181,20 +188,21 @@ contract RPS is IRPS {
     function endGame(uint gameID) internal {
         Game storage game = games[gameID];
         // tie
-        if (game.move1 == game.move2) {
-            balances[game.player1] += game.betAmount;
-            balances[game.player2] += game.betAmount;
-        //player1 wins
-        } else if (
-            (game.move1 == Move.ROCK && game.move2 == Move.SCISSORS) ||
-            (game.move1 == Move.PAPER && game.move2 == Move.ROCK) ||
-            (game.move1 == Move.SCISSORS && game.move2 == Move.PAPER)
-        ) {
-            balances[game.player1] += 2 * game.betAmount;
-        }
-        // player2 wins
-        else {
-            balances[game.player2] += 2 * game.betAmount;
+        if (game.move1 != game.move2) {
+            //player1 wins
+            if (
+                (game.move1 == Move.ROCK && game.move2 == Move.SCISSORS) ||
+                (game.move1 == Move.PAPER && game.move2 == Move.ROCK) ||
+                (game.move1 == Move.SCISSORS && game.move2 == Move.PAPER)
+            ) {
+                balances[game.player1] += 1 * game.betAmount;
+                balances[game.player2] -= 1 * game.betAmount;
+            }
+                // player2 wins
+            else {
+                balances[game.player1] -= 1 * game.betAmount;
+                balances[game.player2] += 1 * game.betAmount;
+            }
         }
         game.state = GameState.NO_GAME;
     }
@@ -214,9 +222,11 @@ contract RPS is IRPS {
             "Only players in this game can claim"
         );
         if (game.move1 != Move.NONE && game.move2 == Move.NONE) {
-            balances[game.player1] += 2 * game.betAmount;
+            balances[game.player1] += 1 * game.betAmount;
+            balances[game.player2] -= 1 * game.betAmount;
         } else if (game.move1 == Move.NONE && game.move2 != Move.NONE) {
-            balances[game.player2] += 2 * game.betAmount;
+            balances[game.player1] -= 1 * game.betAmount;
+            balances[game.player2] += 1 * game.betAmount;
         }
         game.state = GameState.LATE;
     }
@@ -237,7 +247,7 @@ contract RPS is IRPS {
 
     receive() external payable {
         // adds eth to the account of the message sender.
-        balances[msg.sender]+=msg.value;
+        balances[msg.sender] += msg.value;
     }
 
 }

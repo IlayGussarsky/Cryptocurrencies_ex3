@@ -20,6 +20,7 @@ SOLC_VERSION = 'v0.8.19'
 
 # Ensure you have the appropriate Solidity compiler version installed
 install_solc(SOLC_VERSION)
+REVEAL_PHASE_LENGTH = 4
 
 
 # Compile Solidity source code
@@ -51,7 +52,7 @@ def contract(w3, accounts):
 
     # Deploy the contract
     contract = w3.eth.contract(abi=abi, bytecode=bytecode)
-    tx_hash = contract.constructor(4).transact({'from': accounts[0]})
+    tx_hash = contract.constructor(REVEAL_PHASE_LENGTH).transact({'from': accounts[0]})
     tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
     contract_address = tx_receipt.contractAddress
     return w3.eth.contract(address=contract_address, abi=abi)
@@ -71,6 +72,10 @@ def player2(w3, accounts):
     # Fund player1 and player2 accounts with enough balance
     w3.eth.send_transaction({'to': accounts[2], 'value': w3.to_wei(5, 'ether')})  # Fund player2's account
     return accounts[2]
+
+
+def virualBalance(contract, player):
+    return contract.functions.balanceOf(player).call()
 
 
 def test_constructor(contract):
@@ -175,14 +180,14 @@ def test_reveal_move_first_player(contract, accounts, w3, player1, player2):
     # Simulate player 2 making a move
     hidden_move2 = HexBytes(Web3.solidity_keccak(['int256', 'bytes32'], [1, b"secret2"]))
     contract.functions.makeMove(game_id, bet_amount, hidden_move2).transact({'from': player2})
-    contract.functions.revealMove(game_id,1, str1).transact({'from': player1})
+    contract.functions.revealMove(game_id, 1, str1).transact({'from': player1})
 
     # Check game state after first player revealed
     game_state = contract.functions.getGameState(game_id).call()
     assert game_state == 3  # GameState.REVEAL1
     # try reveal again
     try:
-        contract.functions.revealMove(game_id,1, str1).transact({'from': player1})
+        contract.functions.revealMove(game_id, 1, str1).transact({'from': player1})
         # Check if the transaction failed (revert occurred)
     except ContractLogicError:
         return True  # Error occurred as expected
@@ -197,7 +202,7 @@ def test_reveal_move_both_players(contract, accounts, w3, player1, player2):
     bet_amount = w3.to_wei(5, 'ether')
     contract.receive().transact({'from': player1, 'value': w3.to_wei(5, 'ether')})
     contract.receive().transact({'from': player2, 'value': w3.to_wei(5, 'ether')})
-    before = contract.functions.balanceOf(player1)
+    before = virualBalance(contract, player1)
     # Check balances before endGame
     print("before made move1")
     print(before)
@@ -205,19 +210,19 @@ def test_reveal_move_both_players(contract, accounts, w3, player1, player2):
     str1 = (Web3.to_bytes(text="secret1")).zfill(32)
     hidden_move1 = HexBytes(Web3.solidity_keccak(['int256', 'bytes32'], [1, str1]))
     tx1 = contract.functions.makeMove(game_id, bet_amount, hidden_move1).transact({'from': player1})
-    after = contract.functions.balanceOf(player1)
+    after = virualBalance(contract, player1)
     print("after made move1")
     print(after)
     print("tx1", w3.eth.get_transaction_receipt(tx1).gasUsed)
     # assert after == (before -bet_amount)
     print("before made move2")
-    print(w3.to_wei(w3.eth.get_balance(player2), 'ether'))
+    print(w3.to_wei(virualBalance(contract, player2), 'ether'))
     # Simulate player 2 making a move
     str2 = (Web3.to_bytes(text="secret2")).zfill(32)
     hidden_move2 = HexBytes(Web3.solidity_keccak(['int256', 'bytes32'], [2, str2]))
     tx2 = contract.functions.makeMove(game_id, bet_amount, hidden_move2).transact({'from': player2})
     print("after made move2")
-    print(w3.to_wei(w3.eth.get_balance(player2),'ether'))
+    print(w3.from_wei(virualBalance(contract, player2), "ether"))
     # Player 1 reveals move
     tx3 = contract.functions.revealMove(game_id, 1, str1).transact({'from': player1})
 
@@ -237,25 +242,209 @@ def test_reveal_move_both_players(contract, accounts, w3, player1, player2):
     gas_price = w3.eth.gas_price
 
     # Calculate expected balances
-    winner_balance_after = w3.eth.get_balance(player2)
-    loser_balance_after = w3.eth.get_balance(player1)
-
+    winner_balance_after = virualBalance(contract, player2)
+    loser_balance_after = virualBalance(contract, player1)
 
     # Check if the winner balance increased by the correct amount (bet)
     # assert winner_balance_after == winner_balance_before + bet_amount - gas_used * gas_price
 
     # Check if the loser balance decreased by the bet amount
-    assert w3.to_wei(loser_balance_after,'ether') == w3.to_wei(5, 'ether')
+    assert before - loser_balance_after == w3.to_wei(5, 'ether')
 
-def test_revealPhaseEnded(contract, accounts, web3):
-    #TO DO
+
+def test_revealPhaseEnded(contract, accounts, w3, player1, player2):
+    assert virualBalance(contract, player1) == 0
+    assert virualBalance(contract, player2) == 0
+    game_id = 0
+
+    def tryToEnterRevealTestEnded(player=player1):
+        try:
+            contract.functions.revealPhaseEnded(game_id).transact({'from': player})
+            return False
+        except ContractLogicError:
+            pass
+
+
+
+    bet_amount = w3.to_wei(5, 'ether')
+    contract.receive().transact({'from': player1, 'value': bet_amount})
+    contract.receive().transact({'from': player2, 'value': bet_amount})
+
+    # See that you can't enter revealPhaseEnded
+    tryToEnterRevealTestEnded()
+    tryToEnterRevealTestEnded(player=player2)
+
+    # Player 1 makes a move
+    str1 = (Web3.to_bytes(text="secret1")).zfill(32)
+    hidden_move1 = HexBytes(Web3.solidity_keccak(['int256', 'bytes32'], [1, str1]))
+    tx1 = contract.functions.makeMove(game_id, bet_amount, hidden_move1).transact({'from': player1})
+
+    # See that you can't enter revealPhaseEnded
+    tryToEnterRevealTestEnded()
+
+    # Mine some unimportant blocks.
+    for i in range(REVEAL_PHASE_LENGTH + 1):
+        w3.provider.make_request('evm_mine', [])
+    assert contract.functions.getGameState(game_id).call() == 1
+
+    # See that you can't enter revealPhaseEnded
+    tryToEnterRevealTestEnded()
+
+    # Player 2 makes a move
+    str2 = (Web3.to_bytes(text="secret2")).zfill(32)
+    hidden_move2 = HexBytes(Web3.solidity_keccak(['int256', 'bytes32'], [2, str2]))
+    tx2 = contract.functions.makeMove(game_id, bet_amount, hidden_move2).transact({'from': player2})
+
+    # See that you can't enter revealPhaseEnded
+    tryToEnterRevealTestEnded()
+
+    # Mine some unimportant blocks.
+    for i in range(REVEAL_PHASE_LENGTH + 1):
+        w3.provider.make_request('evm_mine', [])
+    assert contract.functions.getGameState(game_id).call() == 2
+
+    # See that you can't enter revealPhaseEnded
+    tryToEnterRevealTestEnded()
+
+    tx3 = contract.functions.revealMove(game_id, 1, str1).transact({'from': player1})
+
+    # Mine some IMPORTANT blocks.
+    for i in range(REVEAL_PHASE_LENGTH-1):
+        w3.provider.make_request('evm_mine', [])
+
+    # See that you can't enter revealPhaseEnded
+    tryToEnterRevealTestEnded()
+
+    # Mine one last block:
+    w3.provider.make_request('evm_mine', [])
+
+    # See that you can enter revealPhaseEnded
+    contract.functions.revealPhaseEnded(game_id).transact({'from': player1})
+    tryToEnterRevealTestEnded(player=player2)
+
+
+
+def test_balanceOf(contract, accounts, w3):
+    # TO DO
     return 1
-def test_balanceOf(contract, accounts, web3):
-    #TO DO
-    return 1
-def test_withdraw(contract, accounts, web3):
-    #TO DO
-    return 1
+
+
+def test_withdraw(contract, accounts, w3, player1, player2):
+    def checkBaseBalance():
+        assert virualBalance(contract, player1) == w3.to_wei(5, 'ether')
+        assert virualBalance(contract, player2) == w3.to_wei(5, 'ether')
+
+    assert virualBalance(contract, player1) == 0
+    assert virualBalance(contract, player2) == 0
+
+    game_id = 0
+    bet_amount = w3.to_wei(5, 'ether')
+    contract.receive().transact({'from': player1, 'value': bet_amount})
+    contract.receive().transact({'from': player2, 'value': bet_amount})
+
+    checkBaseBalance()
+
+    str1 = (Web3.to_bytes(text="secret1")).zfill(32)
+    hidden_move1 = HexBytes(Web3.solidity_keccak(['int256', 'bytes32'], [1, str1]))
+    tx1 = contract.functions.makeMove(game_id, bet_amount, hidden_move1).transact({'from': player1})
+
+    checkBaseBalance()
+
+    str2 = (Web3.to_bytes(text="secret2")).zfill(32)
+    hidden_move2 = HexBytes(Web3.solidity_keccak(['int256', 'bytes32'], [2, str2]))
+    tx2 = contract.functions.makeMove(game_id, bet_amount, hidden_move2).transact({'from': player2})
+
+    checkBaseBalance()
+
+    tx3 = contract.functions.revealMove(game_id, 1, str1).transact({'from': player1})
+
+    checkBaseBalance()
+
+    tx4 = contract.functions.revealMove(game_id, 2, str2).transact({'from': player2})
+
+    # Game ended, now try to withdraw
+    assert virualBalance(contract, player1) == w3.to_wei(0, 'ether')
+    assert virualBalance(contract, player2) == w3.to_wei(10, 'ether')
+
+    try:
+        contract.functions.withdraw(w3.to_wei(15, 'ether')).transact({'from': player2})
+        return False
+    except ContractLogicError:
+        pass
+
+    contract.functions.withdraw(w3.to_wei(7, 'ether')).transact({'from': player2})
+    assert virualBalance(contract, player1) == w3.to_wei(0, 'ether')
+    assert virualBalance(contract, player2) == w3.to_wei(3, 'ether')
+
+    try:
+        contract.functions.withdraw(w3.to_wei(1, 'ether')).transact({'from': player1})
+        return False
+    except ContractLogicError:
+        pass
+
+    contract.receive().transact({'from': player2, 'value': bet_amount})
+    assert virualBalance(contract, player1) == w3.to_wei(0, 'ether')
+    assert virualBalance(contract, player2) == w3.to_wei(8, 'ether')
+
+
+def test_withdraw_draw(contract, accounts, w3, player1, player2):
+    def checkBaseBalance():
+        assert virualBalance(contract, player1) == w3.to_wei(5, 'ether')
+        assert virualBalance(contract, player2) == w3.to_wei(5, 'ether')
+
+    assert virualBalance(contract, player1) == 0
+    assert virualBalance(contract, player2) == 0
+
+    game_id = 0
+    bet_amount = w3.to_wei(5, 'ether')
+    contract.receive().transact({'from': player1, 'value': bet_amount})
+    contract.receive().transact({'from': player2, 'value': bet_amount})
+
+    checkBaseBalance()
+
+    str1 = (Web3.to_bytes(text="secret1")).zfill(32)
+    hidden_move1 = HexBytes(Web3.solidity_keccak(['int256', 'bytes32'], [1, str1]))
+    tx1 = contract.functions.makeMove(game_id, bet_amount, hidden_move1).transact({'from': player1})
+
+    checkBaseBalance()
+
+    str2 = (Web3.to_bytes(text="secret2")).zfill(32)
+    hidden_move2 = HexBytes(Web3.solidity_keccak(['int256', 'bytes32'], [1, str2]))
+    tx2 = contract.functions.makeMove(game_id, bet_amount, hidden_move2).transact({'from': player2})
+
+    checkBaseBalance()
+
+    tx3 = contract.functions.revealMove(game_id, 1, str1).transact({'from': player1})
+
+    checkBaseBalance()
+
+    tx4 = contract.functions.revealMove(game_id, 1, str2).transact({'from': player2})
+
+    # Game ended, now try to withdraw
+    checkBaseBalance()
+
+
+def test_playerSendsTwoMoves(contract, accounts, w3, player1, player2):
+    assert virualBalance(contract, player1) == 0
+    assert virualBalance(contract, player2) == 0
+
+    game_id = 0
+    bet_amount = w3.to_wei(5, 'ether')
+    contract.receive().transact({'from': player1, 'value': bet_amount})
+    contract.receive().transact({'from': player2, 'value': bet_amount})
+
+    str1 = (Web3.to_bytes(text="secret1")).zfill(32)
+    hidden_move1 = HexBytes(Web3.solidity_keccak(['int256', 'bytes32'], [1, str1]))
+    tx1 = contract.functions.makeMove(game_id, bet_amount, hidden_move1).transact({'from': player1})
+
+    try:
+        str1 = (Web3.to_bytes(text="secret1")).zfill(32)
+        hidden_move1 = HexBytes(Web3.solidity_keccak(['int256', 'bytes32'], [1, str1]))
+        tx1 = contract.functions.makeMove(game_id, bet_amount, hidden_move1).transact({'from': player1})
+        return False
+    except ContractLogicError:
+        pass
+
 
 def test_wrongCommitment(contract, accounts, w3, player1, player2):
     game_id = 0
