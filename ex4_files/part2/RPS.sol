@@ -93,18 +93,15 @@ contract RPS is IRPS {
 
         if (game.state == GameState.MOVE1) {
             require(msg.sender != game.player1, "Cannot play against yourself");
-            require(msg.sender.balance>= game.betAmount, "Not enough balance");
-            balances[msg.sender] = msg.sender.balance - game.betAmount;
-            address(this).call{value: betAmount}("");
-
+            require(balances[msg.sender] >= betAmount, "Not enough balance");
+            balances[msg.sender]-=betAmount;
             game.player2 = msg.sender;
             game.hiddenMove2 = hiddenMove;
             game.state = GameState.MOVE2;
             game.move2 = Move.NONE;
         } else if (game.state == GameState.NO_GAME) {
-            require(msg.sender.balance >= betAmount, "Not enough balance");
-            balances[msg.sender] = msg.sender.balance - betAmount;
-            address(this).call{value: betAmount}("");
+            require(balances[msg.sender] >= betAmount, "Not enough balance");
+            balances[msg.sender]-=betAmount;
             game.player1 = msg.sender;
             game.betAmount = betAmount;
             game.hiddenMove1 = hiddenMove;
@@ -122,7 +119,8 @@ contract RPS is IRPS {
         // a canceled game returns the funds to the player. Only the player that made the first move can call this function, and it will run only if
         // no other commitment for a move was entered.
         Game storage game = games[gameID];
-        require(game.state == GameState.MOVE1, "Cannot cancel this game");
+        require(game.state == GameState.MOVE1, "player1 must commit");
+        require(game.hiddenMove2 == 0, "other player did not yet commit");
         require(msg.sender == game.player1, "Only the first player can cancel");
         balances[game.player1] += game.betAmount;
         game.state = GameState.NO_GAME;
@@ -155,11 +153,9 @@ contract RPS is IRPS {
             require(checkCommitment(game.hiddenMove1, Move(move), key), "Invalid commitment");
             game.move1 = move;
             if (game.state == GameState.REVEAL1) {
+                this.revealPhaseEnded(gameID);
                 if (game.move2 != Move.NONE){
-                endGame(gameID);
-                }
-                else if  (block.number >= game.revealBlock + revealPeriodLength){
-                    this.revealPhaseEndedUpdateBalance(gameID);
+                    endGame(gameID);
                 }
             }
             else{
@@ -171,14 +167,11 @@ contract RPS is IRPS {
             require(checkCommitment(game.hiddenMove2, move, key), "Invalid commitment");
              game.move2 = move;
             if (game.state == GameState.REVEAL1) {
+                this.revealPhaseEnded(gameID);
                 if (game.move1 != Move.NONE){
                 endGame(gameID);
                 }
-                else if  (block.number >= game.revealBlock + revealPeriodLength){
-                    this.revealPhaseEndedUpdateBalance(gameID);
-                }
             } else {
-
                 game.revealBlock = block.number;
                 game.state = GameState.REVEAL1;
             }
@@ -187,22 +180,21 @@ contract RPS is IRPS {
 
     function endGame(uint gameID) internal {
         Game storage game = games[gameID];
+        // tie
         if (game.move1 == game.move2) {
             balances[game.player1] += game.betAmount;
             balances[game.player2] += game.betAmount;
+        //player1 wins
         } else if (
             (game.move1 == Move.ROCK && game.move2 == Move.SCISSORS) ||
             (game.move1 == Move.PAPER && game.move2 == Move.ROCK) ||
             (game.move1 == Move.SCISSORS && game.move2 == Move.PAPER)
         ) {
             balances[game.player1] += 2 * game.betAmount;
-            game.player1.call{value: 2 * game.betAmount}("");
-
         }
+        // player2 wins
         else {
             balances[game.player2] += 2 * game.betAmount;
-            game.player2.call{value: 2 * game.betAmount}("");
-
         }
         game.state = GameState.NO_GAME;
     }
@@ -221,26 +213,10 @@ contract RPS is IRPS {
             msg.sender == game.player1 || msg.sender == game.player2,
             "Only players in this game can claim"
         );
-        if (game.move1 != Move.NONE && game.move2 == Move.NONE && game.hiddenMove2 != 0) {
+        if (game.move1 != Move.NONE && game.move2 == Move.NONE) {
             balances[game.player1] += 2 * game.betAmount;
-            game.player1.call{value: 2 * game.betAmount}("");
         } else if (game.move1 == Move.NONE && game.move2 != Move.NONE) {
             balances[game.player2] += 2 * game.betAmount;
-            game.player2.call{value: 2 * game.betAmount}("");
-        }
-        game.state = GameState.LATE;
-    }
-
-
-    function revealPhaseEndedUpdateBalance(uint gameID) external  {
-          Game storage game = games[gameID];
-          if (game.move1 != Move.NONE && game.move2 == Move.NONE) {
-            balances[game.player1] +=  game.betAmount;
-            game.player1.call{value: game.betAmount}("");
-        } else if (game.move1 == Move.NONE && game.move2 != Move.NONE) {
-            balances[game.player2] += game.betAmount;
-            game.player2.call{value: game.betAmount}("");
-
         }
         game.state = GameState.LATE;
     }
@@ -256,12 +232,12 @@ contract RPS is IRPS {
         // (available funds are those that were deposited or won but not currently staked in a game).
         require(balances[msg.sender] >= amount, "Not enough balance");
         balances[msg.sender] -= amount;
-        payable(msg.sender).transfer(amount);
+        msg.sender.call{value: amount}("");
     }
 
     receive() external payable {
         // adds eth to the account of the message sender.
-        balances[msg.sender] += msg.value;
+        balances[msg.sender]+=msg.value;
     }
 
 }
