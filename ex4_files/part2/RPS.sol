@@ -199,16 +199,18 @@ contract RPS is IRPS {
                 balances[game.player1] += 1 * game.betAmount;
                 balances[game.player2] -= 1 * game.betAmount;
                 pending_balances[game.player1]+= 2* game.betAmount;
-                pending_balances[game.player2]-= 2*game.betAmount;
             }
                 // player2 wins
             else {
                 balances[game.player1] -= 1 * game.betAmount;
                 balances[game.player2] += 1 * game.betAmount;
-                pending_balances[game.player1]-= 2* game.betAmount;
                 pending_balances[game.player2]+= 2*game.betAmount;
             }
         }
+        // tie
+        else{
+            pending_balances[game.player1] += game.betAmount;
+            pending_balances[game.player2] += game.betAmount;}
         game.state = GameState.NO_GAME;
     }
 
@@ -230,11 +232,9 @@ contract RPS is IRPS {
             balances[game.player1] += 1 * game.betAmount;
             balances[game.player2] -= 1 * game.betAmount;
             pending_balances[game.player1]+= 2* game.betAmount;
-            pending_balances[game.player2]-= 2*game.betAmount;
         } else if (game.move1 == Move.NONE && game.move2 != Move.NONE) {
             balances[game.player1] -= 1 * game.betAmount;
             balances[game.player2] += 1 * game.betAmount;
-            pending_balances[game.player1]-= 2* game.betAmount;
             pending_balances[game.player2]+= 2*game.betAmount;
         }
         game.state = GameState.LATE;
