@@ -256,3 +256,23 @@ def test_balanceOf(contract, accounts, web3):
 def test_withdraw(contract, accounts, web3):
     #TO DO
     return 1
+
+def test_wrongCommitment(contract, accounts, w3, player1, player2):
+    game_id = 0
+    bet_amount = w3.to_wei(5, 'ether')
+    contract.receive().transact({'from': player1, 'value': bet_amount})
+    contract.receive().transact({'from': player2, 'value': bet_amount})
+
+    str1 = (Web3.to_bytes(text="secret1")).zfill(32)
+    hidden_move1 = HexBytes(Web3.solidity_keccak(['int256', 'bytes32'], [1, str1]))
+    tx1 = contract.functions.makeMove(game_id, bet_amount, hidden_move1).transact({'from': player1})
+
+    str2 = (Web3.to_bytes(text="secret2")).zfill(32)
+    hidden_move2 = HexBytes(Web3.solidity_keccak(['int256', 'bytes32'], [2, str2]))
+    tx2 = contract.functions.makeMove(game_id, bet_amount, hidden_move2).transact({'from': player2})
+
+    try:
+        tx3 = contract.functions.revealMove(game_id, 2, str1).transact({'from': player1})
+    except ContractLogicError:
+        return True
+    return False
