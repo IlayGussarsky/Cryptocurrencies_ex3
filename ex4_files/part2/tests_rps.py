@@ -1,267 +1,258 @@
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
-interface IRPS {
-    // WARNING: Do not change this interface!!! these API functions are used to test your code.
-    function getGameState(uint gameID) external view returns (RPS.GameState);
-    function makeMove(uint gameID, uint betAmount, bytes32 hiddenMove) external;
-    function cancelGame(uint gameID) external;
-    function revealMove(uint gameID, RPS.Move move, bytes32 key) external;
-    function revealPhaseEnded(uint gameID) external;
-    function balanceOf(address player) external view returns (uint);
-    function withdraw(uint amount) external;
-}
-
-contract RPS is IRPS {
-    // This contract lets players play rock-paper-scissors.
-    // its constructor receives a uint k which is the number of blocks mined before a reveal phase is over.
-
-    // players can send the contract money to fund their bets, see their balance and withdraw it, as long as the amount is not in an active game.
-
-    // the game mechanics: The players choose a gameID (some uint) that is not being currently used. They then each call make_move() making a bet and committing to a move.
-    // in the next phase each of them reveals their committment, and once the second commit is done, the game is over. The winner gets the amount of money they agreed on.
-
-    enum GameState {
-        NO_GAME, // signifies that there is no game with this id (or there was and it is over)
-        MOVE1, // signifies that a single move was entered
-        MOVE2, // a second move was entered
-        REVEAL1, // one of the moves was revealed, and the reveal phase just started
-        LATE // one of the moves was revealed, and enough blocks have been mined since so that the other player is considered late.
-    } // These correspond to values 0,1,2,3,4
+import pytest
+from hexbytes import HexBytes
+from web3 import Web3
+import solcx
+from solcx import compile_files, install_solc
+from web3.exceptions import ContractLogicError
+import hashlib
+from enum import Enum
 
 
-    enum Move {
-        NONE,
-        ROCK,
-        PAPER,
-        SCISSORS
-    } //These correspond to values 0,1,2,3
-
-    struct Game {
-        address player1;
-        address player2;
-        uint betAmount;
-        Move move1;
-        Move move2;
-        bytes32 hiddenMove1;
-        bytes32 hiddenMove2;
-        uint revealBlock;
-        GameState state;
-    }
-
-    mapping(uint => Game) public games;
-    mapping(address => uint) public balances;
-    uint public revealPeriodLength;
-
-    constructor(uint _revealPeriodLength) {
-        // Constructs a new contract that allows users to play multiple rock-paper-scissors games.
-        // If one of the players does not reveal the move committed to, then the _revealPeriodLength
-        // is the number of blocks that a player needs to wait from the moment of revealing her move until
-        // she can calim that the other player loses (for not revealing).
-        // The _revealPeriodLength must be at least 1 block.
-        require(_revealPeriodLength >= 1, "Reveal period must be at least 1 block");
-        revealPeriodLength = _revealPeriodLength;
-    }
-
-    function checkCommitment(
-        // A utility function that can be used to check commitments. See also commit.py.
-        // python code to generate the commitment is:
-        //  commitment = HexBytes(Web3.solidityKeccak(['int256', 'bytes32'], [move, key]))
-        bytes32 commitment,
-        Move move,
-        bytes32 key
-    ) public pure returns (bool) {
-        return keccak256(abi.encodePacked(uint(move), key)) == commitment;
-    }
-
-    function getGameState(uint gameID) external view override returns (GameState) {
-        // Returns the state of the game at the current address as a GameState (see enum definition)
-        return games[gameID].state;
-    }
-
-    function makeMove(
-        // The first call to this function starts the game. The second call finishes the commit phase.
-        // The amount is the amount of money (in wei) that a user is willing to bet.
-        // The amount provided in the call by the second player is ignored, but the user must have an amount matching that of the game to bet.
-        // amounts that are wagered are locked for the duration of the game.
-        // A player should not be allowed to enter a commitment twice.
-        // If two moves have already been entered, then this call reverts.
-        uint gameID,
-        uint betAmount,
-        bytes32 hiddenMove
-    ) external override {
-        Game storage game = games[gameID];
-
-        if (game.state == GameState.MOVE1) {
-            require(msg.sender != game.player1, "Cannot play against yourself");
-            require(msg.sender.balance>= game.betAmount, "Not enough balance");
-            balances[msg.sender] = msg.sender.balance - game.betAmount;
-            address(this).call{value: betAmount}("");
-
-            game.player2 = msg.sender;
-            game.hiddenMove2 = hiddenMove;
-            game.state = GameState.MOVE2;
-            game.move2 = Move.NONE;
-        } else if (game.state == GameState.NO_GAME) {
-            require(msg.sender.balance >= betAmount, "Not enough balance");
-            balances[msg.sender] = msg.sender.balance - betAmount;
-            address(this).call{value: betAmount}("");
-            game.player1 = msg.sender;
-            game.betAmount = betAmount;
-            game.hiddenMove1 = hiddenMove;
-            game.hiddenMove2 = 0;
-            game.state = GameState.MOVE1;
-            game.move1 = Move.NONE;
-        } else {
-            revert("Invalid game state");
-        }
-    }
+# Define Move enum locally in your test file
+class Move(Enum):
+    NONE = 0
+    ROCK = 1
+    PAPER = 2
+    SCISSORS = 3
 
 
-    function cancelGame(uint gameID) external override {
-        // This function allows a player to cancel the game, but only if the other player did not yet commit to his move.
-        // a canceled game returns the funds to the player. Only the player that made the first move can call this function, and it will run only if
-        // no other commitment for a move was entered.
-        Game storage game = games[gameID];
-        require(game.state == GameState.MOVE1, "Cannot cancel this game");
-        require(msg.sender == game.player1, "Only the first player can cancel");
-        balances[game.player1] += game.betAmount;
-        game.state = GameState.NO_GAME;
-    }
+SOLC_VERSION = 'v0.8.19'
 
-    function revealMove(uint gameID, Move move, bytes32 key) external {
-         // Reveals the move of a player (which is checked against his commitment using the key)
-        // The first call to this function can be made only after two moves have been entered (otherwise the function reverts).
-        // This call will begin the reveal period.
-        // the second call (if called by the player that entered the second move) reveals her move, ends the game, and awards the money to the winner.
-        // if a player has already revealed, and calls this function again, then this call reverts.
-        // only players that have committed a move may reveal.
-        // if the revealed move is bogus (not rock paper or scissors) the call should revert. This means that if both players entered bogus moves, the game cannot end and their money is stuck.
-        Game storage game = games[gameID];
-        require(
-            game.state == GameState.MOVE2 || game.state == GameState.REVEAL1,
-            "Cannot reveal"
-        );
-        require(
-            msg.sender == game.player1 || msg.sender == game.player2,
-            "Only players in this game can reveal"
-        );
-        require(
-            move == Move.ROCK || move == Move.PAPER || move == Move.SCISSORS,
-            "Invalid move"
-        );
-
-        if (msg.sender == game.player1) {
-            require(game.move1 == Move.NONE, "Move1 already revealed");
-            require(checkCommitment(game.hiddenMove1, Move(move), key), "Invalid commitment");
-            game.move1 = move;
-            if (game.state == GameState.REVEAL1) {
-                if (game.move2 != Move.NONE){
-                endGame(gameID);
-                }
-                else if  (block.number >= game.revealBlock + revealPeriodLength){
-                    this.revealPhaseEndedUpdateBalance(gameID);
-                }
-            }
-            else{
-            game.revealBlock = block.number;
-            game.state = GameState.REVEAL1;
-            }
-        } else if (msg.sender == game.player2) {
-            require(game.move2 == Move.NONE, "Move2 already revealed");
-            require(checkCommitment(game.hiddenMove2, move, key), "Invalid commitment");
-             game.move2 = move;
-            if (game.state == GameState.REVEAL1) {
-                if (game.move1 != Move.NONE){
-                endGame(gameID);
-                }
-                else if  (block.number >= game.revealBlock + revealPeriodLength){
-                    this.revealPhaseEndedUpdateBalance(gameID);
-                }
-            } else {
-
-                game.revealBlock = block.number;
-                game.state = GameState.REVEAL1;
-            }
-        }
-    }
-
-    function endGame(uint gameID) internal {
-        Game storage game = games[gameID];
-        if (game.move1 == game.move2) {
-            balances[game.player1] += game.betAmount;
-            balances[game.player2] += game.betAmount;
-        } else if (
-            (game.move1 == Move.ROCK && game.move2 == Move.SCISSORS) ||
-            (game.move1 == Move.PAPER && game.move2 == Move.ROCK) ||
-            (game.move1 == Move.SCISSORS && game.move2 == Move.PAPER)
-        ) {
-            balances[game.player1] += 2 * game.betAmount;
-            game.player1.call{value: 2 * game.betAmount}("");
-
-        }
-        else {
-            balances[game.player2] += 2 * game.betAmount;
-            game.player2.call{value: 2 * game.betAmount}("");
-
-        }
-        game.state = GameState.NO_GAME;
-    }
-
-    function revealPhaseEnded(uint gameID) external {
-        // If no second reveal is made, and the reveal period ends, the player that did reveal can claim all funds wagered in this game.
-        // The game then ends, and the game id is released (and can be reused in another game).
-        // this function can only be called by the first revealer. If the reveal phase is not over, this function reverts.
-        Game storage game = games[gameID];
-        require(game.state == GameState.REVEAL1, "Reveal phase not started yet");
-        require(
-            block.number >= game.revealBlock + revealPeriodLength,
-            "Reveal period is not over"
-        );
-        require(
-            msg.sender == game.player1 || msg.sender == game.player2,
-            "Only players in this game can claim"
-        );
-        if (game.move1 != Move.NONE && game.move2 == Move.NONE && game.hiddenMove2 != 0) {
-            balances[game.player1] += 2 * game.betAmount;
-            game.player1.call{value: 2 * game.betAmount}("");
-        } else if (game.move1 == Move.NONE && game.move2 != Move.NONE) {
-            balances[game.player2] += 2 * game.betAmount;
-            game.player2.call{value: 2 * game.betAmount}("");
-        }
-        game.state = GameState.LATE;
-    }
+# Ensure you have the appropriate Solidity compiler version installed
+install_solc(SOLC_VERSION)
 
 
-    function revealPhaseEndedUpdateBalance(uint gameID) external  {
-          Game storage game = games[gameID];
-          if (game.move1 != Move.NONE && game.move2 == Move.NONE) {
-            balances[game.player1] +=  game.betAmount;
-            game.player1.call{value: game.betAmount}("");
-        } else if (game.move1 == Move.NONE && game.move2 != Move.NONE) {
-            balances[game.player2] += game.betAmount;
-            game.player2.call{value: game.betAmount}("");
+# Compile Solidity source code
+def compile(file_name: str):
+    solcx.set_solc_version(SOLC_VERSION)
+    compiled_sol = compile_files([file_name], output_values=['abi', 'bin'])
+    contract_id, contract_interface = compiled_sol.popitem()
+    return contract_interface['bin'], contract_interface['abi']
 
-        }
-        game.state = GameState.LATE;
-    }
 
-    function balanceOf(address player) external view returns (uint) {
-        // returns the balance of the given player. Funds that are wagered in games that did not complete yet are not counted as part of the balance.
-        // make sure the access level of this function is "view" as it does not change the state of the contract.
-        return balances[player];
-    }
+@pytest.fixture
+def w3():
+    # Initialize Web3 instance
+    w3 = Web3(Web3.HTTPProvider("http://127.0.0.1:8545"))
+    assert w3.is_connected(), "Web3 is not connected"
+    return w3
 
-    function withdraw(uint amount) external {
-        // Withdraws amount from the account of the sender
-        // (available funds are those that were deposited or won but not currently staked in a game).
-        require(balances[msg.sender] >= amount, "Not enough balance");
-        balances[msg.sender] -= amount;
-        payable(msg.sender).transfer(amount);
-    }
 
-    receive() external payable {
-        // adds eth to the account of the message sender.
-        balances[msg.sender] += msg.value;
-    }
+@pytest.fixture
+def accounts(w3):
+    # Get the list of accounts
+    return w3.eth.accounts
 
-}
+
+@pytest.fixture
+def contract(w3, accounts):
+    # Compile the contract
+    bytecode, abi = compile("RPS.sol")
+
+    # Deploy the contract
+    contract = w3.eth.contract(abi=abi, bytecode=bytecode)
+    tx_hash = contract.constructor(4).transact({'from': accounts[0]})
+    tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+    contract_address = tx_receipt.contractAddress
+    return w3.eth.contract(address=contract_address, abi=abi)
+
+
+@pytest.fixture
+def player1(w3, accounts):
+    w3.eth.send_transaction(
+        {'to': accounts[1], 'from': w3.eth.accounts[0], 'value': w3.to_wei(5, 'ether')})
+    balance = w3.eth.get_balance(accounts[1])
+    print(balance)
+    return accounts[1]
+
+
+@pytest.fixture
+def player2(w3, accounts):
+    # Fund player1 and player2 accounts with enough balance
+    w3.eth.send_transaction({'to': accounts[2], 'value': w3.to_wei(5, 'ether')})  # Fund player2's account
+    return accounts[2]
+
+
+def test_constructor(contract):
+    # Check initial reveal period length according to the revealPeriodLength in contract constructor
+    reveal_period_length = contract.functions.revealPeriodLength().call()
+    assert reveal_period_length == 4
+
+
+def test_wrong_constructor(w3, accounts):
+    # Check initial reveal period length is 0 in constructor
+    bytecode, abi = compile("RPS.sol")
+    # Deploy the contract with reveal period length 0
+    try:
+        w3.eth.contract(abi=abi, bytecode=bytecode).constructor(0).transact({'from': accounts[0]})
+    # Check if the transaction failed (revert occurred)
+    except ContractLogicError:
+        return True  # Error occurred as expected
+    return False  # No error occurred
+
+
+def test_initial_get_game_state(contract):
+    # check game start with NO_GAME state
+    assert contract.functions.getGameState(0).call() == 0
+
+
+def test_after_player1_made_move(w3, contract, accounts, player1):
+    # Simulate player 1 making a move
+    game_id = 0
+    bet_amount = w3.to_wei(1, 'ether')
+    hidden_move = HexBytes(Web3.solidity_keccak(['int256', 'bytes32'], [1, b"secret"]))
+    contract.receive().transact({'from': player1, 'value': w3.to_wei(1, 'ether')})
+    contract.functions.makeMove(game_id, bet_amount, hidden_move).transact({'from': player1})
+    # Call the getGameState function
+    actual_state = contract.functions.getGameState(game_id).call()
+    # Check if the actual state is MOVE1 (1)
+    assert actual_state == 1
+
+
+def test_after_player2_made_move(w3, contract, accounts, player1, player2):
+    # Simulate player 1 making a move
+    game_id = 0
+    bet_amount = w3.to_wei(1, 'ether')
+    contract.receive().transact({'from': player1, 'value': w3.to_wei(1, 'ether')})
+    contract.receive().transact({'from': player2, 'value': w3.to_wei(1, 'ether')})
+
+    # Simulate player 1 making a move
+    hidden_move = HexBytes(Web3.solidity_keccak(['int256', 'bytes32'], [1, b"secret1"]))
+    contract.functions.makeMove(game_id, bet_amount, hidden_move).transact({'from': player1})
+    # Simulate player 2 making a move
+    hidden_move = HexBytes(Web3.solidity_keccak(['int256', 'bytes32'], [1, b"secret2"]))
+    contract.functions.makeMove(game_id, bet_amount, hidden_move).transact({'from': player2})
+    # Call the getGameState function
+    actual_state = contract.functions.getGameState(game_id).call()
+    # Check if the actual state is MOVE2 (2)
+    assert actual_state == 2
+
+
+def test_cancel_game(contract, accounts, w3, player1):
+    # Simulate player 1 making a move
+    game_id = 0
+    bet_amount = w3.to_wei(1, 'ether')
+    contract.receive().transact({'from': player1, 'value': w3.to_wei(1, 'ether')})
+    hidden_move = HexBytes(Web3.solidity_keccak(['int256', 'bytes32'], [1, b"secret"]))
+    contract.functions.makeMove(game_id, bet_amount, hidden_move).transact({'from': player1})
+    # Cancel game
+    contract.functions.cancelGame(game_id).transact({'from': player1})
+    # Check game state
+    game_state = contract.functions.getGameState(game_id).call()
+    assert game_state == 0  # NO_GAME
+
+
+def test_player2_cant_cancel_game(contract, accounts, w3, player1, player2):
+    # Simulate player 1 making a move
+    game_id = 0
+    bet_amount = w3.to_wei(1, 'ether')
+    contract.receive().transact({'from': player1, 'value': w3.to_wei(2, 'ether')})
+    contract.receive().transact({'from': player2, 'value': w3.to_wei(2, 'ether')})
+    # Simulate player 1 making a move
+    hidden_move = HexBytes(Web3.solidity_keccak(['int256', 'bytes32'], [1, b"secret1"]))
+    contract.functions.makeMove(game_id, bet_amount, hidden_move).transact({'from': player1})
+    # Simulate player 2 making a move
+    hidden_move = HexBytes(Web3.solidity_keccak(['int256', 'bytes32'], [1, b"secret2"]))
+    contract.functions.makeMove(game_id, bet_amount, hidden_move).transact({'from': player2})
+    try:
+        contract.functions.cancelGame(game_id).transact({'from': player2})
+    # Check if the transaction failed (revert occurred)
+    except ContractLogicError:
+        return True  # Error occurred as expected
+    return False  # No error occurred
+
+
+def test_reveal_move_first_player(contract, accounts, w3, player1, player2):
+    # Simulate player 1 making a move
+    game_id = 0
+    bet_amount = w3.to_wei(1, 'ether')
+    str1 = (Web3.to_bytes(text="secret1")).zfill(32)
+    contract.receive().transact({'from': player1, 'value': w3.to_wei(1, 'ether')})
+    contract.receive().transact({'from': player2, 'value': w3.to_wei(1, 'ether')})
+    # Simulate player 1 making a move
+    hidden_move1 = HexBytes(Web3.solidity_keccak(['int256', 'bytes32'], [1, str1]))
+    contract.functions.makeMove(game_id, bet_amount, hidden_move1).transact({'from': player1})
+    # Simulate player 2 making a move
+    hidden_move2 = HexBytes(Web3.solidity_keccak(['int256', 'bytes32'], [1, b"secret2"]))
+    contract.functions.makeMove(game_id, bet_amount, hidden_move2).transact({'from': player2})
+    contract.functions.revealMove(game_id,1, str1).transact({'from': player1})
+
+    # Check game state after first player revealed
+    game_state = contract.functions.getGameState(game_id).call()
+    assert game_state == 3  # GameState.REVEAL1
+    # try reveal again
+    try:
+        contract.functions.revealMove(game_id,1, str1).transact({'from': player1})
+        # Check if the transaction failed (revert occurred)
+    except ContractLogicError:
+        return True  # Error occurred as expected
+    return False  # No error occurred
+
+
+def test_reveal_move_both_players(contract, accounts, w3, player1, player2):
+    # TO DO - check why not pass? probably problem with balance in endGame
+
+    # Simulate player 1 making a move
+    game_id = 0
+    bet_amount = w3.to_wei(5, 'ether')
+    contract.receive().transact({'from': player1, 'value': w3.to_wei(5, 'ether')})
+    contract.receive().transact({'from': player2, 'value': w3.to_wei(5, 'ether')})
+    before = contract.functions.balanceOf(player1)
+    # Check balances before endGame
+    print("before made move1")
+    print(before)
+    # Player 1's move
+    str1 = (Web3.to_bytes(text="secret1")).zfill(32)
+    hidden_move1 = HexBytes(Web3.solidity_keccak(['int256', 'bytes32'], [1, str1]))
+    tx1 = contract.functions.makeMove(game_id, bet_amount, hidden_move1).transact({'from': player1})
+    after = contract.functions.balanceOf(player1)
+    print("after made move1")
+    print(after)
+    print("tx1", w3.eth.get_transaction_receipt(tx1).gasUsed)
+    # assert after == (before -bet_amount)
+    print("before made move2")
+    print(w3.to_wei(w3.eth.get_balance(player2), 'ether'))
+    # Simulate player 2 making a move
+    str2 = (Web3.to_bytes(text="secret2")).zfill(32)
+    hidden_move2 = HexBytes(Web3.solidity_keccak(['int256', 'bytes32'], [2, str2]))
+    tx2 = contract.functions.makeMove(game_id, bet_amount, hidden_move2).transact({'from': player2})
+    print("after made move2")
+    print(w3.to_wei(w3.eth.get_balance(player2),'ether'))
+    # Player 1 reveals move
+    tx3 = contract.functions.revealMove(game_id, 1, str1).transact({'from': player1})
+
+    # Check game state after first player revealed
+    game_state = contract.functions.getGameState(game_id).call()
+    assert game_state == 3  # GameState.REVEAL1
+
+    # Player 2 reveals move
+    tx4 = contract.functions.revealMove(game_id, 2, str2).transact({'from': player2})
+
+    # Check game state after both players revealed
+    game_state = contract.functions.getGameState(game_id).call()
+    assert game_state == 0  # GameState.NoGame
+
+    # Calculate gas used
+    gas_used = sum(w3.eth.get_transaction_receipt(tx).gasUsed for tx in [tx1, tx2, tx3, tx4])
+    gas_price = w3.eth.gas_price
+
+    # Calculate expected balances
+    winner_balance_after = w3.eth.get_balance(player2)
+    loser_balance_after = w3.eth.get_balance(player1)
+
+
+    # Check if the winner balance increased by the correct amount (bet)
+    # assert winner_balance_after == winner_balance_before + bet_amount - gas_used * gas_price
+
+    # Check if the loser balance decreased by the bet amount
+    assert w3.to_wei(loser_balance_after,'ether') == w3.to_wei(5, 'ether')
+
+def test_revealPhaseEnded(contract, accounts, web3):
+    #TO DO
+    return 1
+def test_balanceOf(contract, accounts, web3):
+    #TO DO
+    return 1
+def test_withdraw(contract, accounts, web3):
+    #TO DO
+    return 1
