@@ -108,7 +108,6 @@ class TestWalletAttack(unittest.TestCase):
         tx_hash = wallet_attack_instance.functions.exploit(vulnerable_wallet_address).transact(
             {'from': accounts[2], 'value': w3.to_wei(1, 'ether'), 'gas': gas_estimate * 2})
         w3.eth.wait_for_transaction_receipt(tx_hash)
-        print("Attack executed successfully")
 
         # Check the balance of VulnerableWallet after the attack
         balance_after_attack = get_balance(vulnerable_wallet_address)
