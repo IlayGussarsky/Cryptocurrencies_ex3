@@ -57,7 +57,6 @@ contract RPS is IRPS {
 
     mapping(uint => Game) public games;
     mapping(address => uint) public balances;
-    mapping(address => uint) public pending_balances;
     uint public revealPeriodLength;
 
     constructor(uint _revealPeriodLength) {
@@ -101,15 +100,15 @@ contract RPS is IRPS {
 
         if (game.state == GameState.MOVE1) {
             require(msg.sender != game.player1, "Cannot play against yourself");
-            require(pending_balances[msg.sender] >= betAmount, "Not enough balance");
-            pending_balances[msg.sender] -= betAmount;
+            require(balances[msg.sender] >= betAmount, "Not enough balance");
+            balances[msg.sender] -= betAmount;
             game.player2 = msg.sender;
             game.hiddenMove2 = hiddenMove;
             game.state = GameState.MOVE2;
             game.move2 = Move.NONE;
         } else if (game.state == GameState.NO_GAME) {
-            require(pending_balances[msg.sender] >= betAmount, "Not enough balance");
-            pending_balances[msg.sender] -= betAmount;
+            require(balances[msg.sender] >= betAmount, "Not enough balance");
+            balances[msg.sender] -= betAmount;
             game.player1 = msg.sender;
             game.betAmount = betAmount;
             game.hiddenMove1 = hiddenMove;
@@ -131,7 +130,7 @@ contract RPS is IRPS {
         require(game.hiddenMove2 == 0, "other player did not yet commit");
         require(msg.sender == game.player1, "Only the first player can cancel");
         game.state = GameState.NO_GAME;
-        pending_balances[game.player1] += 1 * game.betAmount;
+        balances[game.player1] += 1 * game.betAmount;
         delete games[gameID];
     }
 
@@ -196,21 +195,17 @@ contract RPS is IRPS {
                 (game.move1 == Move.PAPER && game.move2 == Move.ROCK) ||
                 (game.move1 == Move.SCISSORS && game.move2 == Move.PAPER)
             ) {
-                balances[game.player1] += 1 * game.betAmount;
-                balances[game.player2] -= 1 * game.betAmount;
-                pending_balances[game.player1]+= 2* game.betAmount;
+                balances[game.player1] += 2 * game.betAmount;
             }
                 // player2 wins
             else {
-                balances[game.player1] -= 1 * game.betAmount;
-                balances[game.player2] += 1 * game.betAmount;
-                pending_balances[game.player2]+= 2*game.betAmount;
+                balances[game.player2] += 2 * game.betAmount;
             }
         }
         // tie
         else{
-            pending_balances[game.player1] += game.betAmount;
-            pending_balances[game.player2] += game.betAmount;}
+            balances[game.player1] += game.betAmount;
+            balances[game.player2] += game.betAmount;}
         game.state = GameState.NO_GAME;
     }
 
@@ -229,15 +224,11 @@ contract RPS is IRPS {
             "Only players in this game can claim"
         );
         if (game.move1 != Move.NONE && game.move2 == Move.NONE) {
-            balances[game.player1] += 1 * game.betAmount;
-            balances[game.player2] -= 1 * game.betAmount;
-            pending_balances[game.player1]+= 2* game.betAmount;
+            balances[game.player1] += 2 * game.betAmount;
         } else if (game.move1 == Move.NONE && game.move2 != Move.NONE) {
-            balances[game.player1] -= 1 * game.betAmount;
-            balances[game.player2] += 1 * game.betAmount;
-            pending_balances[game.player2]+= 2*game.betAmount;
+            balances[game.player2] += 2 * game.betAmount;
         }
-        game.state = GameState.LATE;
+        game.state = GameState.NO_GAME;
     }
 
     function balanceOf(address player) external view returns (uint) {
@@ -249,7 +240,7 @@ contract RPS is IRPS {
     function withdraw(uint amount) external {
         // Withdraws amount from the account of the sender
         // (available funds are those that were deposited or won but not currently staked in a game).
-        require(pending_balances[msg.sender] >= amount, "Not enough balance");
+        require(balances[msg.sender] >= amount, "Not enough balance");
         balances[msg.sender] -= amount;
         msg.sender.call{value: amount}("");
     }
@@ -257,7 +248,6 @@ contract RPS is IRPS {
     receive() external payable {
         // adds eth to the account of the message sender.
         balances[msg.sender] += msg.value;
-        pending_balances[msg.sender]+= msg.value;
     }
 
 }
