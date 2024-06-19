@@ -21,8 +21,8 @@ def compile(file_name: str):
     return contract_interface['bin'], contract_interface['abi']
 
 # Compile the contracts
-wallet_bytecode, wallet_abi = compile(r'C:\Users\97250\Documents\exricises\Cryptocurrencies\git_exercise4\ex4_files\part1\VulnerableWallet.sol')
-attack_bytecode, attack_abi = compile(r'C:\Users\97250\Documents\exricises\Cryptocurrencies\git_exercise4\ex4_files\part1\WalletAttack.sol')
+wallet_bytecode, wallet_abi = compile(r'..\VulnerableWallet.sol')
+attack_bytecode, attack_abi = compile(r'..\WalletAttack.sol')
 
 # Web3 connection
 w3 = Web3(Web3.HTTPProvider("http://127.0.0.1:8545"))
@@ -87,7 +87,7 @@ def test_wallet_attack_adi():
     assert get_balance(vulnerable_wallet_address) == 3
 
     # Call exploit function in WalletAttack contract
-    wallet_attack_instance.functions.exploit(vulnerable_wallet_address).transact({'from': accounts[1], 'value': w3.to_wei(1, 'ether')})
+    wallet_attack_instance.functions.exploit(vulnerable_wallet_address).transact({'from': accounts[2], 'value': w3.to_wei(1, 'ether')})
     w3.eth.wait_for_transaction_receipt(tx_hash)
     print("Attack executed successfully")
     # Check the balance of VulnerableWallet after the attack
