@@ -51,10 +51,9 @@ contract RPS is IRPS {
         Move move2;
         bytes32 hiddenMove1;
         bytes32 hiddenMove2;
-        uint revealBlock;
         GameState state;
+        uint revealBlock;
     }
-
     mapping(uint => Game) public games;
     mapping(address => uint) public balances;
     uint public revealPeriodLength;
@@ -100,8 +99,8 @@ contract RPS is IRPS {
 
         if (game.state == GameState.MOVE1) {
             require(msg.sender != game.player1, "Cannot play against yourself");
-            require(balances[msg.sender] >= betAmount, "Not enough balance");
-            balances[msg.sender] -= betAmount;
+            require(balances[msg.sender] >= game.betAmount, "Not enough balance");
+            balances[msg.sender] -= game.betAmount;
             game.player2 = msg.sender;
             game.hiddenMove2 = hiddenMove;
             game.state = GameState.MOVE2;
@@ -158,10 +157,9 @@ contract RPS is IRPS {
 
         if (msg.sender == game.player1) {
             require(game.move1 == Move.NONE, "Move1 already revealed");
-            require(checkCommitment(game.hiddenMove1, Move(move), key), "Invalid commitment");
+            require(checkCommitment(game.hiddenMove1, move, key), "Invalid commitment");
             game.move1 = move;
             if (game.state == GameState.REVEAL1) {
-//                this.revealPhaseEnded(gameID);
                 if (game.move2 != Move.NONE) {
                     endGame(gameID);
                 }
@@ -187,7 +185,7 @@ contract RPS is IRPS {
 
     function endGame(uint gameID) internal {
         Game storage game = games[gameID];
-        // tie
+        //  not tie
         if (game.move1 != game.move2) {
             //player1 wins
             if (
@@ -224,18 +222,24 @@ contract RPS is IRPS {
             "Only players in this game can claim"
         );
         if (game.move1 != Move.NONE && game.move2 == Move.NONE) {
+            require(msg.sender == game.player1,
+            "this function can only be called by the first revealer");
             balances[game.player1] += 2 * game.betAmount;
         } else if (game.move1 == Move.NONE && game.move2 != Move.NONE) {
+              require(msg.sender == game.player2,
+            "this function can only be called by the first revealer");
             balances[game.player2] += 2 * game.betAmount;
         }
         game.state = GameState.NO_GAME;
     }
+    ////////// Handling money ////////////////////
 
     function balanceOf(address player) external view returns (uint) {
         // returns the balance of the given player. Funds that are wagered in games that did not complete yet are not counted as part of the balance.
         // make sure the access level of this function is "view" as it does not change the state of the contract.
         return balances[player];
     }
+
 
     function withdraw(uint amount) external {
         // Withdraws amount from the account of the sender
