@@ -1,4 +1,5 @@
 import unittest
+
 from solcx import compile_files, install_solc
 from web3 import Web3
 import solcx
@@ -124,6 +125,50 @@ class TestWalletAttack(unittest.TestCase):
         print(f"Balance of account[2]/attacker after attack: {account2_balance_after_attack} ETH")
         gas_cost = w3.eth.get_transaction_receipt(tx_hash).gasUsed * w3.eth.gas_price
         assert (account2_balance_after_attack - account2_balance_before_attack + gas_cost) >= 3
+
+        # test reattack the wallet fails
+        with self.assertRaises(ContractLogicError):
+            wallet_attack_instance.functions.exploit(vulnerable_wallet_address).transact(
+                {'from': w3.eth.accounts[2], 'value': w3.to_wei(2, 'ether')})
+
+    def test_exploit_more_than_1_ether(self):
+        # Deploy VulnerableWallet contract
+        vulnerable_wallet_interface = w3.eth.contract(abi=wallet_abi, bytecode=wallet_bytecode)
+        vulnerable_tx_hash = vulnerable_wallet_interface.constructor().transact({'from': accounts[1]})
+        vulnerable_tx_receipt = w3.eth.wait_for_transaction_receipt(vulnerable_tx_hash)
+        vulnerable_wallet_address = vulnerable_tx_receipt.contractAddress
+        vul_wallet_instance = w3.eth.contract(address=vulnerable_wallet_address, abi=wallet_abi)
+
+        # Deploy WalletAttack contract
+        wallet_attack_interface = w3.eth.contract(abi=attack_abi, bytecode=attack_bytecode)
+        wallet_attack_tx_hash = wallet_attack_interface.constructor().transact({'from': accounts[2]})
+        wallet_attack_tx_receipt = w3.eth.wait_for_transaction_receipt(wallet_attack_tx_hash)
+        wallet_attack_address = wallet_attack_tx_receipt.contractAddress
+        wallet_attack_instance = w3.eth.contract(address=wallet_attack_address, abi=attack_abi)
+
+        # Check the balance of accounts[2] after the attack
+        account2_balance_before_attack = get_balance(accounts[2])
+        print(f"Balance of account[2]/attacker before attack: {account2_balance_before_attack} ETH")
+
+        # Initial balances
+        print(f"Initial attacker balance: {get_balance(wallet_attack_address)} ETH")
+        print(f"Initial vulnerable wallet balance: {get_balance(vulnerable_wallet_address)} ETH")
+
+        # Deposit 3 Ether to VulnerableWallet
+        tx_hash = vul_wallet_instance.functions.deposit().transact(
+            {'from': accounts[0], 'value': w3.to_wei(3, 'ether')})
+        w3.eth.wait_for_transaction_receipt(tx_hash)
+        print(f"Balance of vulnerable wallet after deposit: {get_balance(vulnerable_wallet_address)} ETH")
+        assert get_balance(vulnerable_wallet_address) == 3
+
+        tx_hash = vul_wallet_instance.functions.deposit().transact(
+            {'from': accounts[0], 'value': w3.to_wei(1, 'ether')})
+
+        with self.assertRaises(ContractLogicError):
+            wallet_attack_instance.functions.exploit(vulnerable_wallet_address).transact(
+                {'from': w3.eth.accounts[2], 'value': w3.to_wei(2, 'ether')})
+
+
     def test_wallet_has_less_than_3_ether(self):
         # Deploy VulnerableWallet contract
         vulnerable_wallet_interface = w3.eth.contract(abi=wallet_abi, bytecode=wallet_bytecode)
